@@ -11,9 +11,9 @@
 #   fig2_bmi_vs_time.png        - BMI vs observed time, events vs censored
 #   fig3a_quartile_loghr.png    - log-HR by BMI quartile
 #   fig3b_age_illustration.png  - illustrative (hand-entered) linear pattern
-#   fig4_model_comparison.png   - apparent and cross-validated C-index
-#   fig5a_quad_spline.png       - linear vs quadratic vs natural spline
-#   fig5b_overfit_spline.png    - flexible spline on a small subsample (overfitting)
+#   fig4_model_comparison.png   - C-index, linear vs quartile BMI
+#   fig5a_quad_spline.png       - linear vs linear + quadratic + spline
+#   fig5b_overfit_spline.png    - very flexible spline (df = 100)
 # ==========================================================
 
 library(dplyr)
@@ -35,9 +35,6 @@ noise_sd        <- 5
 target_censor   <- 0.20      # target proportion censored
 censor_mode     <- "independent"  # "independent" (recommended) or "original"
 k_folds         <- 5         # folds for cross-validated C-index
-spline_df       <- 4         # df for the natural spline in Fig 5A
-overfit_n       <- 150       # small subsample for the overfitting demo (Fig 5B)
-overfit_df      <- 20        # df for the overfit spline in Fig 5B
 out_dir         <- "figures"
 
 dir.create(out_dir, showWarnings = FALSE)
@@ -199,19 +196,12 @@ print(p_fig3b)
 ggsave(file.path(out_dir, "fig3b_age_illustration.png"), p_fig3b, width = 7, height = 5)
 
 # ---------------------------------------------------------
-# 5. Compare BMI specifications (Figure 4)
-#    Splines are written inside the formula so that predict() reuses the
-#    same knots on new data.
+# 5. Compare linear vs quartile BMI (Figure 4)
 # ---------------------------------------------------------
-spline_label <- paste0("Natural spline (", spline_df, " df)")
 model_formulas <- list(
-  Surv(time, status) ~ bmi,
-  Surv(time, status) ~ bmi_quartile,
-  Surv(time, status) ~ bmi + I(bmi^2),
-  as.formula(paste0("Surv(time, status) ~ ns(bmi, df = ", spline_df, ")"))
+  "Linear (1 df)"    = Surv(time, status) ~ bmi,
+  "Quartiles (3 df)" = Surv(time, status) ~ bmi_quartile
 )
-names(model_formulas) <- c("Linear (1 df)", "Quartiles (3 df)",
-                           "Quadratic (2 df)", spline_label)
 # bquote() writes each formula into the stored call, so predict() on new
 # data can rebuild the model frame later
 fits <- lapply(model_formulas, function(f)
@@ -253,10 +243,6 @@ model_comparison <- data.frame(
 cat("\nModel comparison (lower AIC is better; higher C is better):\n")
 print(model_comparison, digits = 4)
 
-# Likelihood ratio test: does the spline improve on the nested linear model?
-cat("\nLikelihood ratio test, linear vs natural spline:\n")
-print(anova(fits[["Linear (1 df)"]], fits[[spline_label]]))
-
 p_fig4 <- model_comparison %>%
   tidyr::pivot_longer(c(apparent_C, cv_C), names_to = "type", values_to = "C") %>%
   mutate(type = recode(type, apparent_C = "Apparent (training data)",
@@ -265,96 +251,136 @@ p_fig4 <- model_comparison %>%
   ggplot(aes(model, C, fill = type)) +
   geom_col(position = position_dodge(0.8), width = 0.7) +
   geom_text(aes(label = sprintf("%.3f", C)),
-            position = position_dodge(0.8), vjust = -0.4, size = 3.2) +
-  coord_cartesian(ylim = c(0.5, 1)) +
+            position = position_dodge(0.8), vjust = -0.4, size = 3.5) +
+  coord_cartesian(ylim = c(0.5, 0.85)) +
   labs(x = NULL, y = "C-index", fill = NULL,
-       title = "Prognostic performance by BMI specification") +
+       title = "Prognostic performance: linear vs quartile BMI") +
   theme_minimal() +
   theme(legend.position = "bottom")
 print(p_fig4)
-ggsave(file.path(out_dir, "fig4_model_comparison.png"), p_fig4, width = 8, height = 5)
+ggsave(file.path(out_dir, "fig4_model_comparison.png"), p_fig4, width = 7, height = 5)
 
 # ---------------------------------------------------------
-# 6. Figure 5A: estimated log-HR curves, relative to BMI = bmi_optimum
+# 6. Linear vs linear + quadratic + spline (Figure 5A)
 # ---------------------------------------------------------
-bmi_grid <- data.frame(bmi = seq(min(surv_data$bmi), max(surv_data$bmi),
-                                 length.out = 200))
+library(splines)
 
-curve_for <- function(fit, label, ref = bmi_optimum) {
-  pred <- predict(fit, newdata = bmi_grid, type = "lp", se.fit = TRUE)
-  ref_lp <- predict(fit, newdata = data.frame(bmi = ref), type = "lp")
-  data.frame(bmi = bmi_grid$bmi, model = label,
-             log_hr = pred$fit - ref_lp,
-             # band shows pointwise uncertainty of the curve's shape
-             lower = pred$fit - ref_lp - 1.96 * pred$se.fit,
-             upper = pred$fit - ref_lp + 1.96 * pred$se.fit)
+# Set up
+bmi <- surv_data$bmi
+bmi_quad <- bmi^2
+bmi_spline_basis <- bs(bmi, degree = 3, df = 3)
+
+# Create transformed dataset
+surv_data_transformed <- cbind(surv_data,
+                               bmi_quad = bmi^2,
+                               bmi_cub1 = bmi_spline_basis[,1],
+                               bmi_cub2 = bmi_spline_basis[,2],
+                               bmi_cub3 = bmi_spline_basis[,3]
+)
+# Fit both models
+cox_linear <- coxph(Surv(time, status) ~ bmi, data = surv_data_transformed)
+cox_quad_spline <- coxph(Surv(time, status) ~ bmi + bmi_quad + bmi_cub1 + bmi_cub2 + bmi_cub3,
+                         data = surv_data_transformed)
+# Note: bmi_cub2 and bmi_cub3 have NA coefficients. The cubic spline basis
+# already contains linear and quadratic components, so these two columns are
+# redundant with bmi and bmi_quad; coxph drops them automatically.
+coef(cox_quad_spline)
+
+# Predict log hazard over range of BMI
+X <- seq(min(bmi), max(bmi), length.out = 100)
+X_quad <- X^2
+X_spline <- predict(bmi_spline_basis, newx = X)   # same knots as the fitted basis
+
+# Coefficients (dropped terms contribute nothing, so treat NA as 0)
+coef_spline <- coef(cox_quad_spline)
+coef_spline[is.na(coef_spline)] <- 0
+coef_linear <- coef(cox_linear)
+
+# Predict linear predictors
+pred_spline <- X * coef_spline["bmi"] +
+  X_quad * coef_spline["bmi_quad"] +
+  X_spline[,1] * coef_spline["bmi_cub1"] +
+  X_spline[,2] * coef_spline["bmi_cub2"] +
+  X_spline[,3] * coef_spline["bmi_cub3"]
+
+pred_linear <- X * coef_linear["bmi"]
+
+# Shift for comparison
+pred_linear <- pred_linear + (mean(pred_spline) - mean(pred_linear))
+
+# Plot and save (Figure 5A)
+plot_fig5a <- function() {
+  par(mfrow=c(1,1), mar = c(5, 4, 2, 1))
+  plot(X, pred_spline, type="l", lwd=3, col="black",
+       xlab="BMI", ylab="Log Hazard Ratio",
+       main="BMI: Linear vs Linear + Quadratic + Spline")
+  lines(X, pred_linear, lwd=3, lty=2, col="blue")
+  abline(v = quantile(bmi, c(0.05, 0.95)), col = "gray", lty = 3)
+  legend("top", legend = c("Linear + Quadratic + Spline", "Linear"),
+         col = c("black", "blue"), lty = c(1, 2), lwd = 3, bty = "n")
 }
-curves <- bind_rows(
-  curve_for(fits[["Linear (1 df)"]],    "Linear"),
-  curve_for(fits[["Quadratic (2 df)"]], "Quadratic"),
-  curve_for(fits[[spline_label]], paste0("Natural spline (", spline_df, " df)"))
-)
-bmi_p05_p95 <- quantile(surv_data$bmi, c(0.05, 0.95))
+plot_fig5a()                                   # show on screen
+png(file.path(out_dir, "fig5a_quad_spline.png"), width = 8, height = 5, units = "in", res = 300)
+plot_fig5a()                                   # save to file
+dev.off()
 
-p_fig5a <- ggplot(curves, aes(bmi, log_hr, colour = model, fill = model)) +
-  geom_ribbon(aes(ymin = lower, ymax = upper), alpha = 0.12, colour = NA) +
-  geom_line(linewidth = 1.1) +
-  geom_vline(xintercept = bmi_p05_p95, linetype = "dotted", colour = "gray40") +
-  geom_hline(yintercept = 0, linetype = "dashed", colour = "gray60") +
-  labs(x = "BMI", y = paste0("log(Hazard ratio) vs BMI ", bmi_optimum),
-       colour = NULL, fill = NULL,
-       title = "Estimated BMI effect under different functional forms",
-       caption = "Dotted lines: 5th and 95th percentiles of BMI") +
-  theme_minimal() +
-  theme(legend.position = "bottom")
-print(p_fig5a)
-ggsave(file.path(out_dir, "fig5a_quad_spline.png"), p_fig5a, width = 8, height = 5)
 
 # ---------------------------------------------------------
-# 7. Figure 5B: overfitting with too many df in a small sample
-#    A flexible spline is fit to a random subsample of `overfit_n`
-#    patients and compared with the quadratic fit from the full data.
+# 7. Very flexible spline, df = 100 (Figure 5B)
 # ---------------------------------------------------------
-set.seed(seed)
-small_data   <- surv_data[sample(nrow(surv_data), overfit_n), ]
-small_events <- sum(small_data$status)
-cat("\nOverfitting demo: n =", overfit_n, ", events =", small_events,
-    ", df =", overfit_df, ", events per df =", round(small_events / overfit_df, 1),
-    "(rule of thumb: about 10 or more)\n")
 
-overfit_fit <- eval(bquote(coxph(
-  .(as.formula(paste0("Surv(time, status) ~ bs(bmi, df = ", overfit_df, ")"))),
-  data = small_data)))
+# ----- Set parameters -----
+df_spline <- 100  # change this to increase/decrease degrees of freedom
 
-# Plot only within the 5th-95th percentile range, where data are dense
-grid_mid <- filter(bmi_grid, bmi >= bmi_p05_p95[1], bmi <= bmi_p05_p95[2])
-lp_rel <- function(fit, grid)
-  predict(fit, newdata = grid, type = "lp") -
-  predict(fit, newdata = data.frame(bmi = bmi_optimum), type = "lp")
+# Set up
+bmi <- surv_data$bmi
 
-fig5b_df <- bind_rows(
-  data.frame(grid_mid, log_hr = lp_rel(overfit_fit, grid_mid),
-             model = paste0("B-spline, ", overfit_df, " df (n = ", overfit_n, ")")),
-  data.frame(grid_mid, log_hr = lp_rel(fits[["Quadratic (2 df)"]], grid_mid),
-             model = paste0("Quadratic, 2 df (n = ", n, ")"))
-)
+# Create spline basis
+bmi_spline_basis <- bs(bmi, df = df_spline)
+colnames(bmi_spline_basis) <- paste0("bmi_spline", 1:df_spline)
 
-p_fig5b <- ggplot(fig5b_df, aes(bmi, log_hr, colour = model, linetype = model)) +
-  geom_hline(yintercept = 0, linetype = "dashed", colour = "gray60") +
-  geom_line(linewidth = 1.1) +
-  geom_rug(data = small_data, aes(x = bmi), inherit.aes = FALSE,
-           alpha = 0.4, sides = "b") +
-  scale_colour_manual(values = c("darkorange", "black")) +
-  scale_linetype_manual(values = c("solid", "dashed")) +
-  labs(x = "BMI (5th to 95th percentile)",
-       y = paste0("log(Hazard ratio) vs BMI ", bmi_optimum),
-       colour = NULL, linetype = NULL,
-       title = "Too many degrees of freedom for too few events",
-       caption = "Rug marks: BMI values in the small subsample") +
-  theme_minimal() +
-  theme(legend.position = "bottom")
-print(p_fig5b)
-ggsave(file.path(out_dir, "fig5b_overfit_spline.png"), p_fig5b, width = 8, height = 5)
+# Add spline basis columns to dataset
+surv_data_transformed <- cbind(surv_data, bmi_spline_basis)
+
+# Build formula dynamically for spline terms
+formula_terms <- paste(colnames(bmi_spline_basis), collapse = " + ")
+cox_formula <- as.formula(paste("Surv(time, status) ~", formula_terms))
+
+# Fit the spline model
+cox_spline <- coxph(cox_formula, data = surv_data_transformed)
+
+# Predict log hazard over range of BMI
+X <- seq(min(bmi), max(bmi), length.out = 100)
+X_spline <- predict(bmi_spline_basis, newx = X)   # same knots as the fitted basis
+
+# Coefficients for spline model (treat any dropped terms as 0)
+coef_spline <- coef(cox_spline)
+coef_spline[is.na(coef_spline)] <- 0
+
+# Predict linear predictors for spline model
+pred_spline <- drop(X_spline %*% coef_spline)
+
+# Predict for linear model
+coef_linear <- coef(cox_linear)
+pred_linear <- X * coef_linear["bmi"]
+
+# Align for comparison
+pred_linear <- pred_linear + (mean(pred_spline) - mean(pred_linear))
+
+# Plot and save comparison (Figure 5B)
+plot_fig5b <- function() {
+  par(mfrow = c(1,1), mar = c(5, 4, 2, 1))
+  plot(X, pred_spline, type = "l", lwd = 3, col = "darkorange",
+       xlab = "BMI", ylab = "Log Hazard Ratio",
+       main = paste("BMI: Linear vs Spline (df =", df_spline, ")"))
+  lines(X, pred_linear, lwd = 3, lty = 2, col = "blue")
+  abline(v = quantile(bmi, c(0.05, 0.95)), col = "gray", lty = 3)
+  legend("topleft", legend = c(paste("Spline df =", df_spline), "Linear"),
+         col = c("darkorange", "blue"), lty = c(1, 2), lwd = 3, bty = "n")
+}
+plot_fig5b()                                   # show on screen
+png(file.path(out_dir, "fig5b_overfit_spline.png"), width = 8, height = 5, units = "in", res = 300)
+plot_fig5b()                                   # save to file
+dev.off()
 
 cat("\nDone. Figures saved to:", normalizePath(out_dir), "\n")
-
