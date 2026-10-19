@@ -1,6 +1,6 @@
 # Understanding Functional Forms in Survival Analysis: Why Linear Isn't Always Enough
 
-*Fan Fan and Jane Liu*
+*Fan Fan*
 
 In survival analysis (and regression modeling broadly), one of the most fundamental—but often overlooked—questions is:
 
