@@ -28,7 +28,7 @@ This kind of pattern, where risk increases at both extremes, creates a U-shaped 
 
 ![U-shaped association between BMI and risk](figures/fig1_u_shape_concept.png)
 
-**Figure 1.** An example of a U-shaped association between BMI and [insert the outcome]. The risk is lowest at a BMI of 22 and increases as BMI falls below or rises above this point, illustrating how the effect of BMI on risk is not constant across its range.
+**Figure 1.** An example of a U-shaped association between BMI and clinical outcome. The risk is lowest at a BMI of 22 and increases as BMI falls below or rises above this point, illustrating how the effect of BMI on risk is not constant across its range.
 
 This U-shaped relationship violates the linearity assumption, and a straight line can't capture such complexity—especially at the extremes of the distribution (i.e., very low BMI such as <18.5, and very high BMI such as >35), where the model may start to significantly underestimate risk.
 
