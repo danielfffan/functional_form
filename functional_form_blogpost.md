@@ -34,7 +34,7 @@ This U-shaped relationship violates the linearity assumption, and a straight lin
 
 ## Checking Functional Form: From Simple to Flexible
 
-Checking the functional form means assessing whether the assumed relationship between a covariate and the log-hazard (usually linear) actually fits the data. This is crucial because an inappropriate form can bias estimates, obscure true effects, or lead to poor predictions/prognostications. In the sections below, we'll walk through several practical approaches to check functional form using synthetic data. This example code [link] demonstrates how to assess a synthetic continuous variable and how modeling the appropriate functional form can enhance prognostic accuracy.
+Checking the functional form means assessing whether the assumed relationship between a covariate and the log-hazard (usually linear) actually fits the data. This is crucial because an inappropriate form can bias estimates, obscure true effects, or lead to poor predictions/prognostications. In the sections below, we'll walk through several practical approaches to check functional form using synthetic data. This example code [[link](https://github.com/danielfffan/functional_form/blob/main/functional_form_blog_post_script.R)] demonstrates how to assess a synthetic continuous variable and how modeling the appropriate functional form can enhance prognostic accuracy.
 
 ### Synthetic data generation
 
