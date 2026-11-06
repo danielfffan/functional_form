@@ -1,7 +1,7 @@
 # ==========================================================
 # Title:   Checking the Functional Form of a Continuous Covariate
 #          in a Cox Proportional Hazards Model (synthetic BMI example)
-# Authors: Fan Fan & Jane Liu
+# Authors: Jane Liu & Fan Fan
 # Date:    2025-07-16 (revised 2026-10-19)
 # Purpose: Simulate a U-shaped BMI–survival relationship, then compare
 #          linear, quartile, quadratic and spline specifications of BMI.
@@ -261,69 +261,50 @@ print(p_fig4)
 ggsave(file.path(out_dir, "fig4_model_comparison.png"), p_fig4, width = 7, height = 5)
 
 # ---------------------------------------------------------
-# 6. Linear vs linear + quadratic + spline (Figure 5A)
+# 6. Linear vs natural (restricted) cubic spline (Figure 5A)
 # ---------------------------------------------------------
-library(splines)
+spline_df <- 4   # total df of the spline (linear trend included)
 
-# Set up
-bmi <- surv_data$bmi
-bmi_quad <- bmi^2
-bmi_spline_basis <- bs(bmi, degree = 3, df = 3)
+cox_linear <- coxph(Surv(time, status) ~ bmi, data = surv_data)
+cox_ns     <- coxph(Surv(time, status) ~ ns(bmi, df = spline_df), data = surv_data)
 
-# Create transformed dataset
-surv_data_transformed <- cbind(surv_data,
-                               bmi_quad = bmi^2,
-                               bmi_cub1 = bmi_spline_basis[,1],
-                               bmi_cub2 = bmi_spline_basis[,2],
-                               bmi_cub3 = bmi_spline_basis[,3]
-)
-# Fit both models
-cox_linear <- coxph(Surv(time, status) ~ bmi, data = surv_data_transformed)
-cox_quad_spline <- coxph(Surv(time, status) ~ bmi + bmi_quad + bmi_cub1 + bmi_cub2 + bmi_cub3,
-                         data = surv_data_transformed)
-# Note: bmi_cub2 and bmi_cub3 have NA coefficients. The cubic spline basis
-# already contains linear and quadratic components, so these two columns are
-# redundant with bmi and bmi_quad; coxph drops them automatically.
-coef(cox_quad_spline)
+# Check: all spline_df coefficients are estimated (no NAs)
+cat("\nSpline coefficients:\n")
+print(coef(cox_ns))
+# Likelihood ratio test for nonlinearity (linear is nested in the spline):
+# df = spline_df - 1
+cat("\nLikelihood ratio test, linear vs spline:\n")
+print(anova(cox_linear, cox_ns))
+print(AIC(cox_linear, cox_ns))
 
-# Predict log hazard over range of BMI
-X <- seq(min(bmi), max(bmi), length.out = 100)
-X_quad <- X^2
-X_spline <- predict(bmi_spline_basis, newx = X)   # same knots as the fitted basis
-
-# Coefficients (dropped terms contribute nothing, so treat NA as 0)
-coef_spline <- coef(cox_quad_spline)
-coef_spline[is.na(coef_spline)] <- 0
-coef_linear <- coef(cox_linear)
-
-# Predict linear predictors
-pred_spline <- X * coef_spline["bmi"] +
-  X_quad * coef_spline["bmi_quad"] +
-  X_spline[,1] * coef_spline["bmi_cub1"] +
-  X_spline[,2] * coef_spline["bmi_cub2"] +
-  X_spline[,3] * coef_spline["bmi_cub3"]
-
-pred_linear <- X * coef_linear["bmi"]
-
-# Shift for comparison
-pred_linear <- pred_linear + (mean(pred_spline) - mean(pred_linear))
+# Predicted log hazard over the BMI range, relative to the average patient,
+# with a 95% confidence band. predict() reuses the knots from the fitted model.
+X     <- seq(min(surv_data$bmi), max(surv_data$bmi), length.out = 100)
+nd    <- data.frame(bmi = X)
+p_ns  <- predict(cox_ns, newdata = nd, type = "lp", se.fit = TRUE)
+p_lin <- predict(cox_linear, newdata = nd, type = "lp")
 
 # Plot and save (Figure 5A)
 plot_fig5a <- function() {
-  par(mfrow=c(1,1), mar = c(5, 4, 2, 1))
-  plot(X, pred_spline, type="l", lwd=3, col="black",
-       xlab="BMI", ylab="Log Hazard Ratio",
-       main="BMI: Linear vs Linear + Quadratic + Spline")
-  lines(X, pred_linear, lwd=3, lty=2, col="blue")
-  abline(v = quantile(bmi, c(0.05, 0.95)), col = "gray", lty = 3)
-  legend("top", legend = c("Linear + Quadratic + Spline", "Linear"),
+  par(mfrow = c(1, 1), mar = c(5, 4, 2, 1))
+  upper <- p_ns$fit + 1.96 * p_ns$se.fit
+  lower <- p_ns$fit - 1.96 * p_ns$se.fit
+  plot(X, p_ns$fit, type = "n", ylim = range(lower, upper, p_lin),
+       xlab = "BMI", ylab = "Log hazard ratio (vs average patient)",
+       main = paste0("BMI: Linear vs natural cubic spline (df = ", spline_df, ")"))
+  polygon(c(X, rev(X)), c(lower, rev(upper)), col = "gray85", border = NA)
+  lines(X, p_ns$fit, lwd = 3)
+  lines(X, p_lin, lwd = 3, lty = 2, col = "blue")
+  abline(v = quantile(surv_data$bmi, c(0.05, 0.95)), col = "gray", lty = 3)
+  legend("top",
+         legend = c(paste0("Natural spline (", spline_df, " df) + 95% CI"),
+                    "Linear (1 df)"),
          col = c("black", "blue"), lty = c(1, 2), lwd = 3, bty = "n")
 }
 plot_fig5a()                                   # show on screen
-png(file.path(out_dir, "fig5a_quad_spline.png"), width = 8, height = 5, units = "in", res = 300)
+png(file.path(out_dir, "fig5a_linear_vs_spline.png"), width = 8, height = 5, units = "in", res = 300)
 plot_fig5a()                                   # save to file
 dev.off()
-
 
 # ---------------------------------------------------------
 # 7. Very flexible spline, df = 100 (Figure 5B)
